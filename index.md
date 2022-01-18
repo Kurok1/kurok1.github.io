@@ -11,3 +11,4 @@ layout: default
 ### [spring framework]
 * [Spring Framework中的ObjectProvider](./docs/spring-framework/object-provider-in-spring-framework.html)
 * [Spring Bean的限定注入和分组](./docs/spring-framework/spring-bean-qualifier-usage.html)
+* [Spring Bean依赖来源](./docs/spring-framework/spring-dependency-source.html)

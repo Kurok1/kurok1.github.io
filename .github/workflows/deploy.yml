@@ -1,12 +1,14 @@
 name: Build documentation
 
 on:
-  # Trigger on push to the `main` branch
+  # If specified, the workflow will be triggered automatically once you push to the `main` branch.
+  # Replace `main` with your branch’s name
   push:
     branches: ["main"]
   # Specify to run a workflow manually from the Actions tab on GitHub
   workflow_dispatch:
 
+# Gives the workflow permissions to clone the repo and create a page deployment
 permissions:
   id-token: write
   pages: write
@@ -43,7 +45,7 @@ jobs:
           path: |
             artifacts/${{ env.ARTIFACT }}
             artifacts/report.json
-            retention-days: 7
+          retention-days: 7
 
       # Add the step below to upload Algolia indexes
       - name: Upload algolia-indexes
@@ -70,6 +72,7 @@ jobs:
         uses: JetBrains/writerside-checker-action@v1
         with:
           instance: ${{ env.INSTANCE }}
+
   deploy:
     environment:
       name: github-pages

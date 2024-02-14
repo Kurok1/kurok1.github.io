@@ -3,10 +3,38 @@
         SYSTEM "https://resources.jetbrains.com/writerside/1.0/product-profile.dtd">
 
 <instance-profile id="hi"
-                 name="Help Instance"
+                 name="NOTES"
                  start-page="Index.md">
 
     <toc-element topic="Index.md"/>
-    <toc-element topic="AQS.md"/>
-    <toc-element topic="ReentrantLock.md"/>
+    <toc-element topic="juc.md">
+        <toc-element topic="AQS.md"/>
+        <toc-element topic="ReentrantLock.md"/>
+        <toc-element topic="ReadWriteLock.md"/>
+        <toc-element topic="CountDownLatch.md"/>
+        <toc-element topic="CyclicBarrier.md"/>
+        <toc-element topic="Semaphore.md"/>
+    </toc-element>
+    <toc-element topic="ThreadPool.md"/>
+    <toc-element topic="MySQL.md">
+        <toc-element topic="MySQL-BASE03.md"/>
+        <toc-element topic="MySQL-BASE02.md"/>
+        <toc-element topic="MySQL-BASE01.md"/>
+        <toc-element topic="MVCC.md"/>
+    </toc-element>
+    <toc-element topic="Spring.md">
+        <toc-element topic="object-provider-in-spring-framework.md"/>
+        <toc-element topic="spring-bean-qualifier-usage.md"/>
+        <toc-element topic="spring-dependency-source.md"/>
+        <toc-element topic="spring-webmvc-locale-handle.md"/>
+    </toc-element>
+    <toc-element topic="ElasticSearch.md">
+        <toc-element topic="ElasticSearch-Data-Model.md"/>
+        <toc-element topic="ElasticSearch-Summary.md"/>
+    </toc-element>
+    <toc-element topic="Redis.md">
+        <toc-element topic="redis-summary.md"/>
+        <toc-element topic="Redis-Stream.md"/>
+    </toc-element>
+
 </instance-profile>

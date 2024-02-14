@@ -7,7 +7,7 @@ Ioc的实现方式一般来说有两种：
 * 依赖注入（Dependency Injection）, 即利用外部容器完成组件依赖的构建，自动注入到目标对象中。
 * 依赖查找（Dependency Lookup）, 即外部容器提供查找接口，由使用者手动获取依赖注入到目标对象中。
 
-### `Spring Framework`中的依赖查找实现
+## `Spring Framework`中的依赖查找实现
 
 前面提及到，依赖查找是利用Ioc容器所提供的查找接口，完成依赖的注入，在Spring Framework中，其Ioc容器的主要实现为
 
@@ -40,7 +40,7 @@ org.springframework.beans.factory.ListableBeanFactory#getBeansWithAnnotation(jav
 
 
 
-### `ObjectProvider`简介
+## `ObjectProvider`简介 {id="objectprovider_1"}
 
 `ObjectProvider`是从Spring 4.3版本开提供的接口，在Spring 5.1中开始出现于`BeanFactory`接口之中，作为类型安全的依赖查找接口的返回值
 
@@ -101,11 +101,11 @@ public interface ObjectProvider<T> extends ObjectFactory<T>, Iterable<T> {
 
 在Spring 5.0版本中，额外对其提供了函数式接口的支持。
 
-### `ObjectProvider`的使用场景
+## `ObjectProvider`的使用场景
 
 前面提及到`ObjectProvier`主要是**作为类型安全的依赖查找接口的返回结果**来使用，下面简单描述下其使用场景
 
-#### 1.屏蔽`BeansException`
+### 1.屏蔽`BeansException`
 
 `BeanException`是Spring Framework提供的一类异常集合，主要用于描述查询bean时所遇到的异常情况，其相关实现有：
 
@@ -152,7 +152,7 @@ ObjectProvider#getIfAvailable
 
 
 
-#### 2.依赖的延迟查找
+### 2.依赖的延迟查找
 
 前面提及到了`ObjectProvider#getIfAvailable`提供了一种安全的依赖查询方式。同时注意到，在`ObjectProvider`中对`getIfAvailable`进行了方法重载,以便做到延迟查找的效果。
 
@@ -168,7 +168,7 @@ ObjectProvider#getIfAvailable
 
 我们利用了`ObjectProvider#getIfAvailable(java.util.function.Supplier<T>)`这一重载方法，当User这个Bean未创建时，可以重新创建一个Bean用于返回，这就是延迟查找。
 
-#### 3.Bean的Stream操作
+### 3.Bean的Stream操作
 
 对应集合类型的bean，如果想对其进行Stream操作，仅靠`BeanFactory`是不行的，需要依赖`ListableBeanFactory`来操作。在Spring 5.1之后，`ObjectProvider`增加了`Iterable`的接口继承，使得可以对集合类型的Bean也可以进行Stream操作。
 

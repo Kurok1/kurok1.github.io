@@ -12,6 +12,7 @@ PRIMARY KEY (`id`), KEY `c` (`c`)
 insert into t values(0,0,0),(5,5,5),(10,10,10),(15,15,15),(20,20,20),(25,25,25);
 ```
 顾名思义，间隙锁，锁的就是两个值之间的空隙。比如下图所示，初始化插入了 6 个记录，这就产生了 7 个间隙。
+
 ![gap_lock](mysql_gap_lock1.png)
 
 **这样，当你执行 select * from t where d=5 for update 的时候，就不止是给数据库中已有的 6 个记录加上了行锁，还同时加了 7 个间隙锁。这样就确保了无法再插入新的记录。**
@@ -123,6 +124,7 @@ mysql> insert into t values(30,10,30);
 binlog 的写入逻辑比较简单：事务执行过程中，先把日志写到 binlog cache，事务提交的时候，再把 binlog cache 写到 binlog 文件中。
 
 一个事务的 binlog 是不能被拆开的，因此不论这个事务多大，也要确保一次性写入。这就涉及到了 binlog cache 的保存问题。系统给 binlog cache 分配了一片内存，每个线程一个，参数 binlog_cache_size 用于控制单个线程内 binlog cache 所占内存的大小。如果超过了这个参数规定的大小，就要暂存到磁盘。
+
 ![binlog_write](binlog_write.png)
 
 可以看到，每个线程有自己 binlog cache，但是共用同一份 binlog 文件。
@@ -140,6 +142,7 @@ write 和 fsync 的时机，是由参数 sync_binlog 控制的：
 
 ## redo log 写入机制
 redo log的写入会优先写入到redo log buffer，然后经过一段时间后，写到磁盘中，期间一条redo log会经历以下状态
+
 ![redo_log_statue](redo_log_statue.png)
 
 1. 存在 redo log buffer 中，物理上是在 MySQL 进程内存中，就是图中的红色部分；

@@ -17,6 +17,7 @@
     </toc-element>
     <toc-element topic="ThreadPool.md"/>
     <toc-element topic="MySQL.md">
+        <toc-element topic="MySQL-BASE04.md"/>
         <toc-element topic="MySQL-BASE03.md"/>
         <toc-element topic="MySQL-BASE02.md"/>
         <toc-element topic="MySQL-BASE01.md"/>
@@ -33,6 +34,7 @@
         <toc-element topic="ElasticSearch-Summary.md"/>
     </toc-element>
     <toc-element topic="Redis.md">
+        <toc-element topic="Redis-BASE01.md"/>
         <toc-element topic="redis-summary.md"/>
         <toc-element topic="Redis-Stream.md"/>
     </toc-element>

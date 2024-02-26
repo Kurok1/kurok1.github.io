@@ -16,11 +16,12 @@
         <toc-element topic="Semaphore.md"/>
     </toc-element>
     <toc-element topic="JVM.md">
-        <toc-element topic="JVM5.md"/>
-        <toc-element topic="JVM4.md"/>
-        <toc-element topic="JVM3.md"/>
-        <toc-element topic="JVM2.md"/>
         <toc-element topic="JVM1.md"/>
+        <toc-element topic="JVM2.md"/>
+        <toc-element topic="JVM3.md"/>
+        <toc-element topic="JVM-HOTSPOT-GC-BASE.md"/>
+        <toc-element topic="JVM4.md"/>
+        <toc-element topic="JVM5.md"/>
     </toc-element>
     <toc-element topic="ThreadPool.md"/>
     <toc-element topic="MySQL.md">

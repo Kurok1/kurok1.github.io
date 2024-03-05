@@ -22,6 +22,8 @@
         <toc-element topic="JVM-HOTSPOT-GC-BASE.md"/>
         <toc-element topic="JVM4.md"/>
         <toc-element topic="JVM5.md"/>
+        <toc-element topic="JVM6.md"/>
+        <toc-element topic="JVM-CLASS-LOADING.md"/>
     </toc-element>
     <toc-element topic="ThreadPool.md"/>
     <toc-element topic="MySQL.md">

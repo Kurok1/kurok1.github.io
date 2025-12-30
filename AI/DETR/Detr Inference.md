@@ -213,6 +213,7 @@ import math
 from matplotlib import pyplot as plt
 from io import BytesIO
 from starlette.responses import StreamingResponse
+
 # ---------- Config ----------
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # ---------- FastAPI app ----------
@@ -224,6 +225,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 # ---------- Request / Response Models ----------
 class ImageUrlContent(BaseModel):
     url: str
@@ -236,6 +238,7 @@ class ImageInputMessage(BaseModel):
 class ImageInput(BaseModel):
     model: Optional[str] = None
     messages: List[ImageInputMessage] = []
+    
 # ---------- Multi-model load ----------
 # 模型注册表
 MODEL_REGISTRY: Dict[str, Dict] = {
@@ -257,6 +260,7 @@ for name, cfg in MODEL_REGISTRY.items():
     processors[name] = proc
     print(f"✅ Loaded [{name}] → {cfg['path']} on {DEVICE}")
 print("All models loaded.")
+
 # ---------- Helpers ----------
 def read_image_from_base64(b64: str) -> Image.Image:
     # allow data URI or plain base64
@@ -268,6 +272,7 @@ def read_image_from_base64(b64: str) -> Image.Image:
             return img.convert("RGB")
     except Exception as e:
         raise ValueError(f"Invalid base64 image: {e}")
+
 async def fetch_image_from_url(url: str) -> Image.Image:
     # Lightweight fetch using requests to keep dependencies minimal
     # Note: in environments without internet, this will fail.
@@ -277,11 +282,13 @@ async def fetch_image_from_url(url: str) -> Image.Image:
         raise ValueError(f"Failed to fetch image: HTTP {r.status_code}")
     with Image.open(io.BytesIO(r.content)) as img:
         return img.convert("RGB")
+
 def compute_image_tokens(img: Image.Image) -> int:
     w, h = img.size
     tokens = (w * h) / 784.0
     # round to nearest integer, ensure at least 1
     return max(1, int(math.floor(tokens + 0.5)))
+
 def run_detr_inference(img: Image.Image, model_name: str, threshold: float = 0.9) -> List[Dict[str, Any]]:
     if model_name not in models:
         raise ValueError(f"Model '{model_name}' not loaded. Available models: {list(models.keys())}")
@@ -338,6 +345,7 @@ async def predict_preview(model: str, url: str, threshold: float = 0.9):
     plt.close()
     # 返回 StreamingResponse
     return StreamingResponse(buf, media_type="image/jpeg")
+
 @app.post("/v1/vision/detect/visualize")
 async def predict_visualize(req: ImageInput, request: Request, response: Response):
     image = None

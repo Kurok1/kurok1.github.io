@@ -20,7 +20,6 @@ coco_output/
 下面给出python格式的转换脚本
 ```python
 #!/usr/bin/env python
-
 import argparse
 import collections
 import datetime
@@ -31,201 +30,227 @@ import os.path as osp
 import sys
 import uuid
 import random
-
 import imgviz
 import numpy as np
 import labelme
 
 try:
-    import pycocotools.mask
+    import pycocotools.mask
 except ImportError:
-    print("Please install pycocotools:\n\n    pip install pycocotools\n")
-    sys.exit(1)
+    print("Please install pycocotools:\n\n    pip install pycocotools\n")
+    sys.exit(1)
 
 def parse_args():
-    parser = argparse.ArgumentParser(
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
-    )
-    parser.add_argument("input_dir", help="input annotated directory")
-    parser.add_argument("output_dir", help="output dataset directory")
-    parser.add_argument("--labels", help="labels file", required=True)
-    parser.add_argument("--noviz", help="no visualization", action="store_true")
-    parser.add_argument("--seed", type=int, default=42, help="random seed")
-    return parser.parse_args()
+    parser = argparse.ArgumentParser(
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    parser.add_argument("input_dir", help="input annotated directory")
+    parser.add_argument("output_dir", help="output dataset directory")
+    parser.add_argument("--labels", help="labels file", required=True)
+    parser.add_argument("--noviz", help="no visualization", action="store_true")
+    parser.add_argument("--seed", type=int, default=42, help="random seed")
+    
+    return parser.parse_args()
 
 def build_coco_structure(now, class_name_to_id):
-    data = dict(
-        info=dict(
-            description=None,
-            url=None,
-            version=None,
-            year=now.year,
-            contributor=None,
-            date_created=now.strftime("%Y-%m-%d %H:%M:%S.%f"),
-        ),
-        licenses=[
-            dict(
-                url=None,
-                id=0,
-                name=None,
-            )
-        ],
-        images=[],
-        type="instances",
-        annotations=[],
-        categories=[
-            dict(
-                supercategory=None,
-                id=class_id,
-                name=class_name,
-            )
-            for class_name, class_id in class_name_to_id.items()
-        ],
-    )
-    return data
+    data = dict(
+        info=dict(
+            description=None,
+            url=None,
+            version=None,
+            year=now.year,
+            contributor=None,
+            date_created=now.strftime("%Y-%m-%d %H:%M:%S.%f"),
+        ),
+        licenses=[
+            dict(
+                url=None,
+                id=0,
+                name=None,
+            )
+        ],
+        images=[],
+        type="instances",
+        annotations=[],
+        categories=[
+            dict(
+                supercategory=None,
+                id=class_id,
+                name=class_name,
+            )
+            for class_name, class_id in class_name_to_id.items()
+        ],
+    )
+    return data
 
 def main():
-    args = parse_args()
-    random.seed(args.seed)
+    args = parse_args()
+    random.seed(args.seed)
+    if osp.exists(args.output_dir):
+        print("Output directory already exists:", args.output_dir)
+        sys.exit(1)
+        
+    os.makedirs(args.output_dir)
+    os.makedirs(osp.join(args.output_dir, "JPEGImages"))
+    if not args.noviz:
+        os.makedirs(osp.join(args.output_dir, "Visualization"))
 
-    if osp.exists(args.output_dir):
-        print("Output directory already exists:", args.output_dir)
-        sys.exit(1)
-    os.makedirs(args.output_dir)
-    os.makedirs(osp.join(args.output_dir, "JPEGImages"))
-    if not args.noviz:
-        os.makedirs(osp.join(args.output_dir, "Visualization"))
-    print("Creating dataset:", args.output_dir)
+    print("Creating dataset:", args.output_dir)
+    now = datetime.datetime.now()
+    # 读取类别
+    class_name_to_id = {}
+    class_name_count = {}
+    for i, line in enumerate(open(args.labels).readlines()):
+        class_id = i - 1  # starts with -1
+        class_name = line.strip()
+        if class_id == -1:
+            assert class_name == "__ignore__"
+            continue
+        class_name_to_id[class_name] = class_id
+        class_name_count[class_name] = 0
+    
+    # 获取所有json文件并划分
+    label_files = glob.glob(osp.join(args.input_dir, "*.json"))
+    random.shuffle(label_files)
+    n_total = len(label_files)
+    n_train = int(n_total)
+    train_files = label_files[:n_train]
 
-    now = datetime.datetime.now()
+    for split_name, split_files in [("train", train_files)]:
+        data = build_coco_structure(now, class_name_to_id)
+        image_id = 0  # only increment when an image is actually added to dataset
+        for filename in split_files:
+            print(f"Processing file:", filename)
+            label_file = labelme.LabelFile(filename=filename)
+            base = osp.splitext(osp.basename(filename))[0]
+            img = labelme.utils.img_data_to_arr(label_file.imageData)
+            masks = {}
 
-    # 读取类别
-    class_name_to_id = {}
-    class_name_count = {}
-    for i, line in enumerate(open(args.labels).readlines()):
-        class_id = i - 1  # starts with -1
-        class_name = line.strip()
-        if class_id == -1:
-            assert class_name == "__ignore__"
-            continue
-        class_name_to_id[class_name] = class_id
-        class_name_count[class_name] = 0
+            segmentations = collections.defaultdict(list)
+            found_known_label = False
+            
+            for shape in label_file.shapes:
+                points = shape["points"]
+                label = shape["label"]
+                # 如果 label 不在 labels.txt 中，则跳过该 shape（并给出警告）
+                if label not in class_name_to_id:
+                    print(f"Warning: label '{label}' in file '{filename}' not found in {args.labels}. Skipping this shape.")
+                    continue
 
-    # 获取所有json文件并划分
-    label_files = glob.glob(osp.join(args.input_dir, "*.json"))
-    random.shuffle(label_files)
-    n_total = len(label_files)
-    n_train = int(n_total)
-    train_files = label_files[:n_train]
+                # 标记该图片包含已知类别
+                found_known_label = True
+                # 仅对已知类别进行计数
+                class_name_count[label] = class_name_count[label] + 1
+                group_id = shape.get("group_id")
+                shape_type = shape.get("shape_type", "polygon")
+                mask = labelme.utils.shape_to_mask(img.shape[:2], points, shape_type)
+                if group_id is None:
+                    group_id = uuid.uuid1()
 
-    for split_name, split_files in [("train", train_files)]:
-        data = build_coco_structure(now, class_name_to_id)
-        for image_id, filename in enumerate(split_files):
-            print(f"Generating {split_name} dataset from:", filename)
-            label_file = labelme.LabelFile(filename=filename)
-            base = osp.splitext(osp.basename(filename))[0]
-            out_img_file = osp.join(args.output_dir, "JPEGImages", base + ".jpg")
-            img = labelme.utils.img_data_to_arr(label_file.imageData)
-            imgviz.io.imsave(out_img_file, img)
-            data["images"].append(
-                dict(
-                    license=0,
-                    url=None,
-                    file_name=osp.relpath(out_img_file, osp.dirname(args.output_dir)),
-                    height=img.shape[0],
-                    width=img.shape[1],
-                    date_captured=None,
-                    id=image_id,
-                )
-            )
-            masks = {}
-            segmentations = collections.defaultdict(list)
-            for shape in label_file.shapes:
-                points = shape["points"]
-                label = shape["label"]
+                instance = (label, group_id)
+                if instance in masks:
+                    masks[instance] = masks[instance] | mask
+                else:
+                    masks[instance] = mask
 
-                # 如果 label 不在 labels.txt 中，则跳过该 shape（并给出警告）
-                if label not in class_name_to_id:
-                    print(f"Warning: label '{label}' in file '{filename}' not found in {args.labels}. Skipping this shape.")
-                    continue
-
-                # 仅对已知类别进行计数
-                class_name_count[label] = class_name_count[label] + 1
-
-                group_id = shape.get("group_id")
-                shape_type = shape.get("shape_type", "polygon")
-                mask = labelme.utils.shape_to_mask(img.shape[:2], points, shape_type)
-                if group_id is None:
-                    group_id = uuid.uuid1()
-                instance = (label, group_id)
-                if instance in masks:
-                    masks[instance] = masks[instance] | mask
-                else:
-                    masks[instance] = mask
-                if shape_type == "rectangle":
-                    (x1, y1), (x2, y2) = points
-                    x1, x2 = sorted([x1, x2])
-                    y1, y2 = sorted([y1, y2])
-                    points = [x1, y1, x2, y1, x2, y2, x1, y2]
-                if shape_type == "circle":
-                    (x1, y1), (x2, y2) = points
-                    r = np.linalg.norm([x2 - x1, y2 - y1])
-                    n_points_circle = max(int(np.pi / np.arccos(1 - 1 / r)), 12)
-                    i = np.arange(n_points_circle)
-                    x = x1 + r * np.sin(2 * np.pi / n_points_circle * i)
-                    y = y1 + r * np.cos(2 * np.pi / n_points_circle * i)
-                    points = np.stack((x, y), axis=1).flatten().tolist()
-                else:
-                    points = np.asarray(points).flatten().tolist()
-                segmentations[instance].append(points)
-            segmentations = dict(segmentations)
-            for instance, mask in masks.items():
-                cls_name, group_id = instance
-                if cls_name not in class_name_to_id:
-                    continue
-                cls_id = class_name_to_id[cls_name]
-                mask = np.asfortranarray(mask.astype(np.uint8))
-                mask = pycocotools.mask.encode(mask)
-                area = float(pycocotools.mask.area(mask))
-                bbox = pycocotools.mask.toBbox(mask).flatten().tolist()
-                data["annotations"].append(
-                    dict(
-                        id=len(data["annotations"]),
-                        image_id=image_id,
-                        category_id=cls_id,
-                        segmentation=segmentations[instance],
-                        area=area,
-                        bbox=bbox,
-                        iscrowd=0,
-                    )
-                )
-            if not args.noviz:
-                viz = img
-                if masks:
-                    labels, captions, masks_ = zip(
-                        *[
-                            (class_name_to_id[cnm], cnm, msk)
-                            for (cnm, gid), msk in masks.items()
-                            if cnm in class_name_to_id
-                        ]
-                    )
-                    viz = imgviz.instances2rgb(
-                        image=img,
-                        labels=labels,
-                        masks=masks_,
-                        captions=captions,
-                        font_size=15,
-                        line_width=2,
-                    )
-                out_viz_file = osp.join(args.output_dir, "Visualization", base + ".jpg")
-                imgviz.io.imsave(out_viz_file, viz)
-        out_ann_file = osp.join(args.output_dir, f"annotations_{split_name}.json")
-        with open(out_ann_file, "w") as f:
-            json.dump(data, f)
-        print(class_name_count)
+                # 互斥处理不同 shape_type 的点集
+                if shape_type == "rectangle":
+                    (x1, y1), (x2, y2) = points
+                    x1, x2 = sorted([x1, x2])
+                    y1, y2 = sorted([y1, y2])
+                    pts = [x1, y1, x2, y1, x2, y2, x1, y2]
+                    points = pts
+                elif shape_type == "circle":
+                    (x1, y1), (x2, y2) = points
+                    r = np.linalg.norm([x2 - x1, y2 - y1])
+                    # 保证 r 不为 0，且至少 12 个点
+                    if r <= 1:
+                        n_points_circle = 12
+                    else:
+                        # 防止除以零或 arccos 参数超域
+                        val = 1 - 1 / r
+                        val = min(1.0, max(-1.0, val))
+                        try:
+                            n_points_circle = max(int(np.pi / np.arccos(val)), 12)
+                        except Exception:
+                            n_points_circle = 12
+                    i = np.arange(n_points_circle)
+                    x = x1 + r * np.sin(2 * np.pi / n_points_circle * i)
+                    y = y1 + r * np.cos(2 * np.pi / n_points_circle * i)
+                    points = np.stack((x, y), axis=1).flatten().tolist()
+                else:
+                    points = np.asarray(points).flatten().tolist()
+                segmentations[instance].append(points)
+            # 如果该图片没有任何已知类别标签，则跳过，不加入 COCO 数据集
+            if not found_known_label:
+                print(f"Info: No known labels in '{filename}'. Skipping this image (not added to dataset).")
+                continue
+            # 保存图像文件并在 images 中注册（此时可确定图片会被加入）
+            out_img_file = osp.join(args.output_dir, "JPEGImages", base + ".jpg")
+            imgviz.io.imsave(out_img_file, img)
+            data["images"].append(
+                dict(
+                    license=0,
+                    url=None,
+                    file_name=osp.relpath(out_img_file, osp.dirname(args.output_dir)),
+                    height=img.shape[0],
+                    width=img.shape[1],
+                    date_captured=None,
+                    id=image_id,
+                )
+            )
+            # 将 masks -> annotations
+            segmentations = dict(segmentations)
+            for instance, mask in masks.items():
+                cls_name, gid = instance
+                # 再次保险检查（理论上不会触发，因为之前已过滤）
+                if cls_name not in class_name_to_id:
+                    continue
+                cls_id = class_name_to_id[cls_name]
+                mask_arr = np.asfortranarray(mask.astype(np.uint8))
+                mask_enc = pycocotools.mask.encode(mask_arr)
+                area = float(pycocotools.mask.area(mask_enc))
+                bbox = pycocotools.mask.toBbox(mask_enc).flatten().tolist()
+                data["annotations"].append(
+                    dict(
+                        id=len(data["annotations"]),
+                        image_id=image_id,
+                        category_id=cls_id,
+                        segmentation=segmentations[instance],
+                        area=area,
+                        bbox=bbox,
+                        iscrowd=0,
+                    )
+                )
+            # 可视化（仅在需要时）
+            if not args.noviz:
+                viz = img
+                if masks:
+                    items = [
+                        (class_name_to_id[cnm], cnm, msk)
+                        for (cnm, gid), msk in masks.items()
+                        if cnm in class_name_to_id
+                    ]
+                    if items:
+                        labels, captions, masks_ = zip(*items)
+                        viz = imgviz.instances2rgb(
+                            image=img,
+                            labels=labels,
+                            masks=masks_,
+                            captions=captions,
+                            font_size=15,
+                            line_width=2,
+                        )
+                out_viz_file = osp.join(args.output_dir, "Visualization", base + ".jpg")
+                imgviz.io.imsave(out_viz_file, viz)
+            image_id += 1
+        out_ann_file = osp.join(args.output_dir, f"annotations_{split_name}.json")
+        with open(out_ann_file, "w") as f:
+            json.dump(data, f)
+        print("Class counts:", class_name_count)
 
 if __name__ == "__main__":
-    main()
+    main()
 ```
 
 使用参考：

@@ -187,22 +187,24 @@ for image in imageList:
 """
 DETR online inference service (OpenAI-compatible API)
 - FastAPI application
-- Loads a DETR model (Hugging Face Transformers / DetrForObjectDetection)
-- Endpoint: POST /v1/vision/detections
-  Body: JSON with either `image_url` or `image_base64` (base64 string); `model` optional
-  Follows a lightweight OpenAI-like request shape
-- Response: JSON with `predictions` array (boxes, labels, scores)
+- Loads DETR models (Hugging Face Transformers / DetrForObjectDetection)
+- Endpoints:
+  - POST /v1/vision/detections
+    Body: OpenAI-like request shape with image_url or image_base64 (base64 string)
+    Supports `top_k` in request body to return only the top-k predictions per image (sorted by score desc).
+  - POST /v1/vision/detect/visualize
+  - GET  /v1/vision/detect/preview
 - Response header `X-Prompts-Token` contains token count for the input image only
   Token formula: tokens = width * height / 784 (floating result rounded to nearest int)
 Requirements:
 - python 3.9+
-- pip install fastapi uvicorn pillow torch transformers torchvision python-multipart
+- pip install fastapi uvicorn pillow torch transformers torchvision python-multipart requests matplotlib
 Usage:
 uvicorn detr_inference_service:app --host 0.0.0.0 --port 8080
 """
-from fastapi import FastAPI, HTTPException, Request, Response, Header
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import base64
 import io
@@ -216,8 +218,9 @@ from starlette.responses import StreamingResponse
 
 # ---------- Config ----------
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
 # ---------- FastAPI app ----------
-app = FastAPI(title="DETR Inference (OpenAI-compatible)", version="0.1")
+app = FastAPI(title="DETR Inference (OpenAI-compatible)", version="0.2")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -229,28 +232,36 @@ app.add_middleware(
 # ---------- Request / Response Models ----------
 class ImageUrlContent(BaseModel):
     url: str
+
 class ImageInputContent(BaseModel):
-    type: str = None
+    # 兼容你现有的请求结构：type=image_url 时使用 image_url.url
+    # 如果后续你想更标准化，也可以改成 type=image_base64 时使用 image_base64 字段
+    type: Optional[str] = None
     image_url: Optional[ImageUrlContent] = None
+
 class ImageInputMessage(BaseModel):
-    role: str = 'user'
+    role: str = "user"
     content: List[ImageInputContent] = []
+
 class ImageInput(BaseModel):
     model: Optional[str] = None
     messages: List[ImageInputMessage] = []
-    
+    # 新增：每张图返回 top_k 个结果（按 score 降序），不传则返回全部（受 threshold 影响）
+    top_k: Optional[int] = Field(default=None, ge=1, description="Return top-k predictions per image (sorted by score desc).")
+
 # ---------- Multi-model load ----------
-# 模型注册表
 MODEL_REGISTRY: Dict[str, Dict] = {
     "detr_model_name1": {
-        "path": "/path/to/detr_model" #指定路径
+        "path": "/path/to/detr_model"
     },
     "detr_model_name2": {
-        "path": "/path/to/detr_model" #指定路径
+        "path": "/path/to/detr_model"
     }
 }
-models = {}
-processors = {}
+
+models: Dict[str, DetrForObjectDetection] = {}
+processors: Dict[str, DetrImageProcessor] = {}
+
 print("Loading DETR models...")
 for name, cfg in MODEL_REGISTRY.items():
     proc = DetrImageProcessor.from_pretrained(cfg["path"], local_files_only=True)
@@ -274,8 +285,6 @@ def read_image_from_base64(b64: str) -> Image.Image:
         raise ValueError(f"Invalid base64 image: {e}")
 
 async def fetch_image_from_url(url: str) -> Image.Image:
-    # Lightweight fetch using requests to keep dependencies minimal
-    # Note: in environments without internet, this will fail.
     import requests
     r = requests.get(url, timeout=10)
     if r.status_code != 200:
@@ -286,184 +295,217 @@ async def fetch_image_from_url(url: str) -> Image.Image:
 def compute_image_tokens(img: Image.Image) -> int:
     w, h = img.size
     tokens = (w * h) / 784.0
-    # round to nearest integer, ensure at least 1
     return max(1, int(math.floor(tokens + 0.5)))
 
-def run_detr_inference(img: Image.Image, model_name: str, threshold: float = 0.9) -> List[Dict[str, Any]]:
+def _parse_threshold_from_header(request: Request, default: float = 0.9) -> float:
+    raw = request.headers.get("X-Detr-Threshold", None)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except Exception:
+        # 解析失败则回退到默认值
+        return default
+
+def run_detr_inference(
+    img: Image.Image,
+    model_name: str,
+    threshold: float = 0.9,
+    top_k: Optional[int] = None
+) -> List[Dict[str, Any]]:
     if model_name not in models:
         raise ValueError(f"Model '{model_name}' not loaded. Available models: {list(models.keys())}")
+
     model = models[model_name]
     processor = processors[model_name]
+
     inputs = processor(images=img, return_tensors="pt").to(DEVICE)
     with torch.no_grad():
         outputs = model(**inputs)
-    target_sizes = torch.tensor([img.size[::-1]], device=DEVICE)
-    results = processor.post_process_object_detection(outputs, threshold=threshold, target_sizes=target_sizes)[0]
-    preds = []
+
+    target_sizes = torch.tensor([img.size[::-1]], device=DEVICE)  # (h, w)
+    results = processor.post_process_object_detection(
+        outputs,
+        threshold=threshold,
+        target_sizes=target_sizes
+    )[0]
+
+    preds: List[Dict[str, Any]] = []
     for score, label, box in zip(results["scores"], results["labels"], results["boxes"]):
+        label_id = int(label.detach().cpu().item())
         preds.append({
-            "score": float(score.cpu().item()),
-            "label_id": int(label.cpu().item()),
-            "label": model.config.id2label[int(label.cpu().item())] if hasattr(model.config, "id2label") else str(int(label.cpu().item())),
-            "bbox": [float(x) for x in box.cpu().tolist()]
+            "score": float(score.detach().cpu().item()),
+            "label_id": label_id,
+            "label": model.config.id2label[label_id] if hasattr(model.config, "id2label") else str(label_id),
+            "bbox": [float(x) for x in box.detach().cpu().tolist()]
         })
+
+    # 关键：top-k（每张图内按分数排序后截断）
+    preds.sort(key=lambda x: x["score"], reverse=True)
+    if top_k is not None:
+        preds = preds[:top_k]
+
+    # 释放显存（如果在 cuda 上）
     del inputs
     del outputs
-    torch.cuda.empty_cache()
+    if DEVICE == "cuda":
+        torch.cuda.empty_cache()
+
     return preds
-        
+
 # ---------- Endpoint ----------
 @app.get("/v1/vision/detect/preview")
-async def predict_preview(model: str, url: str, threshold: float = 0.9):
-    image = None
+async def predict_preview(model: str, url: str, threshold: float = 0.9, top_k: int = 10):
+    # 该接口是 GET，无 request body；如你也希望 preview 支持 top_k，可以加 query 参数 top_k
     try:
         image = await fetch_image_from_url(url)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-    if image is None:
-        return {"error": "Invalid input type or image URL"}
-    results = run_detr_inference(image, model, threshold)
-    # 可视化结果
+
+    results = run_detr_inference(image, model, float(threshold), top_k=top_k)
+
     draw = image.copy()
     plt.figure(figsize=(12, 8))
     plt.imshow(draw)
     ax = plt.gca()
     for result in results:
-        box = result['bbox']
-        score = result['score']
-        label = result['label']
-        xmin, ymin, xmax, ymax = box
+        xmin, ymin, xmax, ymax = result["bbox"]
         ax.add_patch(plt.Rectangle((xmin, ymin), xmax - xmin, ymax - ymin,
                                    fill=False, color="red", linewidth=2))
-        ax.text(xmin, ymin, f"{label}: {score:.2f}", fontsize=12,
-                bbox=dict(facecolor='yellow', alpha=0.5))
+        ax.text(xmin, ymin, f'{result["label"]}: {result["score"]:.2f}', fontsize=12,
+                bbox=dict(facecolor="yellow", alpha=0.5))
     plt.axis("off")
-    # 将图像保存到字节流
+
     buf = BytesIO()
     plt.savefig(buf, format="jpg")
     buf.seek(0)
     plt.close()
-    # 返回 StreamingResponse
     return StreamingResponse(buf, media_type="image/jpeg")
 
 @app.post("/v1/vision/detect/visualize")
 async def predict_visualize(req: ImageInput, request: Request, response: Response):
-    image = None
+    if not req.messages or not req.messages[-1].content:
+        raise HTTPException(status_code=400, detail="Missing messages/content")
+
+    # 这里沿用你原来的取法：取最后一个 content 做可视化
     content = req.messages[-1].content[-1]
-    if 'image_url' == content.type and content.image_url:
-        try:
+    image = None
+
+    try:
+        if content.type == "image_url" and content.image_url:
             image = await fetch_image_from_url(content.image_url.url)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
-    if 'image_base64' == content.type and content.image_url:
-        try:
+        elif content.type == "image_base64" and content.image_url:
+            # 兼容：你目前把 base64 也塞在 image_url.url 里
             image = read_image_from_base64(content.image_url.url)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
     if image is None:
-        return {"error": "Invalid input type or image URL"}
-    model_name = request.headers.get("X-Model", req.model)
-    if not model_name:
-        model_name = req.model
-    threshold = request.headers.get("X-Detr-Threshold", 0.9)
-    results = run_detr_inference(image, model_name, float(threshold))
-    # 可视化结果
+        raise HTTPException(status_code=400, detail="Invalid input type or image payload")
+
+    model_name = request.headers.get("X-Model", req.model) or req.model
+    threshold = _parse_threshold_from_header(request, default=0.9)
+    top_k = req.top_k
+
+    results = run_detr_inference(image, model_name, threshold=threshold, top_k=top_k)
+
     draw = image.copy()
     plt.figure(figsize=(12, 8))
     plt.imshow(draw)
     ax = plt.gca()
     for result in results:
-        box = result['bbox']
-        score = result['score']
-        label = result['label']
-        xmin, ymin, xmax, ymax = box
+        xmin, ymin, xmax, ymax = result["bbox"]
         ax.add_patch(plt.Rectangle((xmin, ymin), xmax - xmin, ymax - ymin,
                                    fill=False, color="red", linewidth=2))
-        ax.text(xmin, ymin, f"{label}: {score:.2f}", fontsize=12,
-                bbox=dict(facecolor='yellow', alpha=0.5))
+        ax.text(xmin, ymin, f'{result["label"]}: {result["score"]:.2f}', fontsize=12,
+                bbox=dict(facecolor="yellow", alpha=0.5))
     plt.axis("off")
-    # 将图像保存到字节流
+
     buf = BytesIO()
     plt.savefig(buf, format="jpg")
     buf.seek(0)
     plt.close()
-    # 返回 StreamingResponse
     return StreamingResponse(buf, media_type="image/jpeg")
+
 @app.post("/v1/vision/detections")
 async def detections(req: ImageInput, request: Request, response: Response):
     """OpenAI-like endpoint for DETR detection.
-    Accepts either image_b64 or image_url. Returns predictions and sets X-Prompts-Token header.
+    Accepts image_url or image_base64 (base64 currently carried in image_url.url for compatibility).
+    Returns predictions and sets X-Prompts-Token header.
+    Supports `top_k` in request body to return only top-k predictions per image.
     """
-    # choose image source
-    imageList = []
+    if not req.messages or not req.messages[-1].content:
+        raise HTTPException(status_code=400, detail="Missing messages/content")
+
+    image_list: List[Image.Image] = []
     for content in req.messages[-1].content:
-        if 'image_url' == content.type and content.image_url:
-            try:
+        try:
+            if content.type == "image_url" and content.image_url:
                 img = await fetch_image_from_url(content.image_url.url)
-                imageList.append(img)
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=str(e))
-        if 'image_base64' == content.type and content.image_url:
-            try:
+                image_list.append(img)
+            elif content.type == "image_base64" and content.image_url:
                 img = read_image_from_base64(content.image_url.url)
-                imageList.append(img)
-            except Exception as e:
-                raise HTTPException(status_code=400, detail=str(e))
-    # inference
+                image_list.append(img)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    if not image_list:
+        raise HTTPException(status_code=400, detail="No valid images found in request")
+
     prompts_tokens = 0
-    index = 0
-    model_name = request.headers.get("X-Model", req.model)
-    if not model_name:
-        model_name = req.model
-    threshold = request.headers.get("X-Detr-Threshold", 0.9)
-    res = []
+    model_name = request.headers.get("X-Model", req.model) or req.model
+    threshold = _parse_threshold_from_header(request, default=0.9)
+    top_k = req.top_k
+
+    res: List[Dict[str, Any]] = []
     try:
-        for img in imageList:
+        for index, img in enumerate(image_list):
             prompts_tokens += compute_image_tokens(img)
-            preds = run_detr_inference(img, model_name, float(threshold))
-            # mimic OpenAI style response
+            preds = run_detr_inference(img, model_name, threshold=threshold, top_k=top_k)
             res.append({
                 "index": index,
                 "result": preds
             })
-            index += 1
-        # set header
+
         response.headers["X-Prompts-Token"] = str(prompts_tokens)
-        out = {
+        return {
             "object": "detection",
             "model": model_name,
+            "top_k": top_k,          # 便于调用方确认服务端实际使用的 top_k
+            "threshold": threshold,  # 同上
             "predictions": res
         }
-        return out
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Model inference error: {e}")
-    
+
 # models list
 @app.get("/models")
 def list_models():
     return {"loaded_models": list(models.keys())}
+
 # health
 @app.get("/health")
 def health():
     return {"status": "ok", "model": MODEL_REGISTRY, "device": DEVICE}
+
 # ---------- Example cURL ----------
 # curl --location 'http://${host}:${port}/v1/vision/detections' \
 # --header 'X-Model: detr_model_name1' \
+# --header 'X-Detr-Threshold: 0.5' \
 # --header 'Content-Type: application/json' \
 # --data '{
-#     "messages": [
+#   "top_k": 5,
+#   "messages": [
+#     {
+#       "role": "user",
+#       "content": [
 #         {
-#             "role": "user",
-#             "content": [
-#                 {
-#                     "type": "image_url",
-#                     "image_url": {
-#                         "url": "https://66yunlian-res-public-prod.oss-cn-beijing.aliyuncs.com/prod/nywl/20250812/953196f26488411f91371eb2580ea5fe.jpg"
-#                     }
-#                 }
-#             ]
+#           "type": "image_url",
+#           "image_url": { "url": "https://66yunlian-res-public-prod.oss-cn-beijing.aliyuncs.com/prod/nywl/20250812/953196f26488411f91371eb2580ea5fe.jpg" }
 #         }
-#     ]
+#       ]
+#     }
+#   ]
 # }'
 # curl http://${host}:${port}/v1/vision/detect/preview?model=detr-resnet-50_staff_20250726&url=https://66yunlian-res-public-prod.oss-cn-beijing.aliyuncs.com/prod/nywl/20250812/953196f26488411f91371eb2580ea5fe.jpg
 ```

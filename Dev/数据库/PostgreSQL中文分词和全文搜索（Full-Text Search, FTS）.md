@@ -253,3 +253,84 @@ ORDER BY rank DESC;
 3. **性能关键：** 务必使用 `USING GIN` 创建索引。
     
 4. **自动化：** 使用 `GENERATED ALWAYS AS ... STORED` 列来自动管理向量数据。
+
+# 词汇更新
+如果你有一些专有名词（比如公司名“字节跳动”），默认可能分词为“字节”和“跳动”。 你可以在 Postgres 配置目录下的 `tsearch_data` 文件夹中添加 `dict.utf8.xdb`（zhparser 使用 SCWS 的词典格式）。但在 Docker 环境中，最简单的方法是通过 SQL 动态添加（临时生效）或映射宿主机目录。 _SQL 添加自定义词方式：_
+
+SQL
+
+```
+insert into zhparser.zhprs_custom_word values('字节跳动');
+SELECT zhprs_sync_dict_xdb(); -- 必须同步才会生效
+```
+
+但是需要注意的是：
+> 添加自定义词汇（并执行 `zhprs_sync_dict_xdb()`）只会改变**未来**的某些操作（如新插入的数据、新执行的查询）的分词逻辑。
+> 
+   对于数据库中**已经存储在磁盘上**的 `tsvector` 数据，PostgreSQL **不会**自动回头去重新计算它们。这就导致了一个现象：**旧数据用旧规则，新数据用新规则，导致搜索结果不一致。**
+   >
+   你需要根据你的表结构，手动触发刷新。
+
+## 字段刷新
+### 场景一：你使用了生成列 (GENERATED ... STORED) —— 【最常见】
+
+如果你采用了我之前推荐的方案，即表结构里有一个实际存储的 `tsvector` 列：
+
+SQL
+
+```
+-- 你的表结构类似这样
+tsv tsvector GENERATED ALWAYS AS (to_tsvector('chinese', content)) STORED
+```
+
+因为数据是 `STORED`（物理存储）的，你需要强制触发一次全表的“重算”。
+
+#### 解决方法：
+
+执行一个 Update 操作，告诉 PostgreSQL 重新计算该列的默认生成逻辑。
+
+SQL
+
+```
+-- 强制更新 tsv 列，使用 DEFAULT 关键字触发重算
+UPDATE docs SET tsv = DEFAULT;
+```
+
+_注意：PostgreSQL 会自动更新相关的 GIN 索引，不需要你手动重建索引。_
+
+---
+
+### 场景二：你只创建了索引 (Expression Index)
+
+如果你没有创建单独的 `tsvector` 列，而是直接在索引里写的逻辑：
+
+SQL
+
+```
+-- 没有 tsv 列，直接建索引
+CREATE INDEX idx_content ON docs USING GIN (to_tsvector('chinese', content));
+```
+
+这种情况下，索引文件里的数据依然是旧的。
+
+#### 解决方法：
+
+你需要重建索引。
+
+SQL
+
+```
+REINDEX INDEX idx_content;
+```
+
+---
+
+### ⚠️ 生产环境的关键警告
+
+如果你的数据量很小（几万条），上面的命令随便跑，几秒钟就完事。 但如果你的数据量有 **百万/千万级**，直接执行 `UPDATE docs SET tsv = DEFAULT` 会产生严重的后果：
+
+1. **锁表：** 可能会锁住全表，导致业务中断。
+    
+2. **IO 爆炸：** 会产生大量的磁盘写操作和 WAL 日志（因为每一行都被重写了）。
+    
+3. **表膨胀：** PostgreSQL 的 UPDATE 本质是“标记旧行删除 + 插入新行”，这会导致表体积迅速膨胀，需要后续 VACUUM。

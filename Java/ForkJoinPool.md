@@ -1,6 +1,6 @@
 # ForkJoinPool的工作场景和使用
 
-`ForkJoinPool` 是 JDK 并发包里专门为“可递归拆分的并行计算（divide-and-conquer）”设计的线程池实现。它的核心价值在于：把一个大任务拆成很多小任务并行执行，并通过**工作窃取（work-stealing）**机制在各工作线程之间动态均衡负载，从而更高效地利用多核 CPU。
+`ForkJoinPool` 是 JDK 并发包里专门为“可递归拆分的并行计算（divide-and-conquer）”设计的线程池实现。它的核心价值在于：把一个大任务拆成很多小任务并行执行，并通过**工作窃取（work-stealing）** 机制在各工作线程之间动态均衡负载，从而更高效地利用多核 CPU。
 
 ---
 

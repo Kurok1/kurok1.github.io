@@ -1,6 +1,6 @@
 [to](https://chatgpt.com/c/6955dffc-81c4-8321-acbe-06b4ebd02067)
 # 《Attention is all you need》 这篇论文讲诉了什么？
-《Attention Is All You Need》（2017，Vaswani 等）这篇论文提出了 **Transformer**：一种**完全不依赖循环网络（RNN）和卷积（CNN）**、只用**注意力机制（attention）**就能做序列到序列任务（典型是机器翻译）的模型。论文的核心观点就是：**“注意力本身就足够”**，用它可以更快训练、并行更友好、效果也更好。
+《Attention Is All You Need》（2017，Vaswani 等）这篇论文提出了 **Transformer**：一种**完全不依赖循环网络（RNN）和卷积（CNN）**、只用**注意力机制（attention）** 就能做序列到序列任务（典型是机器翻译）的模型。论文的核心观点就是：**“注意力本身就足够”**，用它可以更快训练、并行更友好、效果也更好。
 
 ## 它解决了什么问题
 
